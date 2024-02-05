@@ -73,6 +73,7 @@ from electrum.logging import Logger
 from electrum.lnutil import extract_nodeid, ConnStringFormatError
 from electrum.lnaddr import lndecode
 from electrum.submarine_swaps import SwapServerError
+from electrum.qrreader.decoders import get_psbt_decoder
 
 from .exception_window import Exception_Hook
 from .amountedit import BTCAmountEdit
@@ -1888,7 +1889,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         d.exec_()
 
     def show_qrcode(self, data, title=None, parent=None, *,
-                    help_text=None, show_copy_text_btn=False):
+                    help_text=None, show_copy_text_btn=False, base64_data=[]):
         if not data:
             return
         if title is None:
@@ -1899,6 +1900,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             title=title,
             help_text=help_text,
             show_copy_text_btn=show_copy_text_btn,
+            base64_data=base64_data,
             config=self.config,
         )
         d.exec_()
@@ -2114,12 +2116,18 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             return
 
     def read_tx_from_qrcode(self):
+
         def cb(success: bool, error: str, data):
             if not success:
                 if error:
                     self.show_error(error)
                 return
             if not data:
+                return
+            # if the user scanned a specter or UR psbt
+            decoder_cb.decoder = get_psbt_decoder(data)
+            if decoder_cb.decoder:
+                decoder_cb(success, error, data)
                 return
             # if the user scanned a bitcoin URI
             if data.lower().startswith(BITCOIN_BIP21_URI_SCHEME + ':'):
@@ -2133,6 +2141,18 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             if not tx:
                 return
             self.show_transaction(tx)
+
+        def decoder_cb(success: bool, error: str, data):
+            decoder_cb.decoder.receive_part(data)
+            if decoder_cb.decoder.is_complete():
+                tx_text = decoder_cb.decoder.get_base64_data()
+                tx = self.tx_from_text(tx_text)
+                if not tx:
+                    return
+                self.show_transaction(tx)
+            else:
+                scan_qrcode(parent=self.top_level_window(), config=self.config, callback=decoder_cb)
+        decoder_cb.decoder = None
 
         scan_qrcode(parent=self.top_level_window(), config=self.config, callback=cb)
 

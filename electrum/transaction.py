@@ -973,6 +973,12 @@ class Transaction:
         tx_bytes = tx.serialize_as_bytes()
         return base_encode(tx_bytes, base=43), is_complete
 
+    def to_qr_base64(self):
+        tx = copy.deepcopy(self)
+        if isinstance(tx, PartialTransaction):
+            tx.convert_all_utxos_to_witness_utxos()
+        return tx.serialize()
+
     def txid(self) -> Optional[str]:
         if self._cached_txid is None:
             self.deserialize()

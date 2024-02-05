@@ -24,6 +24,7 @@ from electrum.util import EventListener, event_listener, get_logger
 from electrum.invoices import PR_UNPAID, PR_PAID, PR_EXPIRED, PR_INFLIGHT, PR_UNKNOWN, PR_FAILED, PR_ROUTING, PR_UNCONFIRMED, PR_BROADCASTING, PR_BROADCAST
 from electrum.logging import Logger
 from electrum.qrreader import MissingQrDetectionLib
+from electrum.qrreader.decoders import get_psbt_decoder
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -676,6 +677,10 @@ class GenericInputHandler:
                 if error:
                     show_error(error)
                 return
+            decoder_cb.decoder = get_psbt_decoder(data)
+            if decoder_cb.decoder:
+                decoder_cb(success, error, data)
+                return
             if not data:
                 data = ''
             if allow_multi:
@@ -686,6 +691,15 @@ class GenericInputHandler:
                     setText(new_text)
                 except Exception as e:
                     show_error(_('Invalid payment identifier in QR') + ':\n' + repr(e))
+
+        def decoder_cb(success: bool, error: str, data):
+            decoder_cb.decoder.receive_part(data)
+            if decoder_cb.decoder.is_complete():
+                return
+            else:
+                scan_qrcode(parent=self.top_level_window(), config=config, callback=decoder_cb)
+
+        decoder_cb.decoder = None
 
         from .qrreader import scan_qrcode
         if parent is None:

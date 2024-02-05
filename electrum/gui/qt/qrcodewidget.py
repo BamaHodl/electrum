@@ -5,10 +5,10 @@ import qrcode.exceptions
 
 from PyQt5.QtGui import QColor, QPen
 import PyQt5.QtGui as QtGui
-from PyQt5.QtCore import Qt, QRect
+from PyQt5.QtCore import Qt, QRect, QTimer
 from PyQt5.QtWidgets import (
     QApplication, QVBoxLayout, QTextEdit, QHBoxLayout, QPushButton, QWidget,
-    QFileDialog,
+    QFileDialog, QTabWidget
 )
 
 from electrum.i18n import _
@@ -116,8 +116,62 @@ class QRCodeWidget(QWidget):
         rect = QRect(0, 0, fsize, fsize)
         return QWidget.grab(self, rect)
 
+class SpecterQREncoder:
+    def __init__(self, data):
+        if data[-1:] == b"\n":
+            data = data[:-1]
+        #data = data.decode('utf-8')
+        self.data = data
+        self.qr_max_fragment_size = 65
+        self.part_num_sent = 0
+        self.sent_complete = False
+        self._create_parts()
+
+
+    def _create_parts(self):
+        self.parts = []
+
+        start = 0
+        stop = self.qr_max_fragment_size
+        qr_cnt = ((len(self.data)-1) // self.qr_max_fragment_size) + 1
+
+        if qr_cnt == 1:
+            self.parts.append(self.data[start:stop])
+
+        cnt = 0
+        while cnt < qr_cnt and qr_cnt != 1:
+            part = "p" + str(cnt+1) + "of" + str(qr_cnt) + " " + self.data[start:stop]
+            self.parts.append(part)
+
+            start = start + self.qr_max_fragment_size
+            stop = stop + self.qr_max_fragment_size
+            if stop > len(self.data):
+                stop = len(self.data)
+            cnt += 1
+
+
+    def next_part(self) -> str:
+        # if part num sent is gt number of parts, start at 0
+        if self.part_num_sent > (len(self.parts) - 1):
+            self.part_num_sent = 0
+
+        part = self.parts[self.part_num_sent]
+
+        # when parts sent eq num of parts in list
+        if self.part_num_sent == (len(self.parts) - 1):
+            self.sent_complete = True
+
+        # increment to next part
+        self.part_num_sent += 1
+
+        return part
+
+
 
 class QRDialog(WindowModalDialog):
+
+    #specter_qrw : QRCodeWidget = None
+    #specter_encoder : SpecterQREncoder = None
 
     def __init__(
             self,
@@ -128,6 +182,7 @@ class QRDialog(WindowModalDialog):
             show_text=False,
             help_text=None,
             show_copy_text_btn=False,
+            base64_data=[],
             config: SimpleConfig,
     ):
         WindowModalDialog.__init__(self, parent, title)
@@ -188,9 +243,60 @@ class QRDialog(WindowModalDialog):
         b.setDefault(True)
 
         vbox.addLayout(hbox)
-        self.setLayout(vbox)
+
+        main_widget = vbox
+
+        if base64_data:
+
+            self.defaultqr_tab = QWidget()
+            self.defaultqr_tab.setLayout(vbox)
+            self.defaultqr_tab.setMinimumSize(self.defaultqr_tab.sizeHint())
+
+            self.specter_encoder = SpecterQREncoder(data=base64_data)
+            self.specter_tab = self.create_specter_tab()
+            self.tabs = QTabWidget(self)
+            self.tabs.addTab(self.defaultqr_tab, 'Default (HD)')
+            self.tabs.addTab(self.specter_tab, 'SeedSigner/Specter')
+            main_widget = self.tabs
+
+            self.timer = QTimer(self)
+
+            if len(self.specter_encoder.parts) > 1:
+                self.timer.timeout.connect(self.nextSpecterData)
+                self.timer.start(300)
+        else:
+            self.setLayout(vbox)
 
         # note: the word-wrap on the text_label is causing layout sizing issues.
         #       see https://stackoverflow.com/a/25661985 and https://bugreports.qt.io/browse/QTBUG-37673
         #       workaround:
-        self.setMinimumSize(self.sizeHint())
+        self.setMinimumSize(main_widget.sizeHint())
+
+
+    def nextSpecterData(self):
+        self.specter_qrw.setData(self.specter_encoder.next_part())
+
+    def create_specter_tab(self):
+        w = QWidget()
+        vbox = QVBoxLayout()
+
+        self.specter_qrw = QRCodeWidget(self.specter_encoder.next_part(), manual_size=True)
+        self.specter_qrw.setMinimumSize(250, 250)
+        vbox.addWidget(self.specter_qrw, 1)
+
+        hbox = QHBoxLayout()
+        hbox.addStretch(1)
+
+        b = QPushButton(_("Close"))
+        hbox.addWidget(b)
+        b.clicked.connect(self.accept)
+        b.setDefault(True)
+
+        vbox.addLayout(hbox)
+        w.setLayout(vbox)
+        w.setMinimumSize(w.sizeHint())
+        return w
+
+
+
+
